@@ -3,7 +3,6 @@ package com.parkshare.app.feature_host
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.parkshare.app.data.ParkShareRepository
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,11 +11,10 @@ import java.util.UUID
 
 /**
  * ViewModel managing host space listings, registration of new parking properties,
- * and real-time status toggling with Firestore mock synchronization.
+ * and real-time status toggling with Cloud Firestore synchronization.
  */
 class HostViewModel : ViewModel() {
 
-    // Sourced dynamically from centralized ParkShareRepository
     val listings: StateFlow<List<HostListing>> = ParkShareRepository.hostListingsFlow
 
     private val _statusMessage = MutableStateFlow<String?>(null)
@@ -29,16 +27,7 @@ class HostViewModel : ViewModel() {
     val isPublishing: StateFlow<Boolean> = _isPublishing.asStateFlow()
 
     /**
-     * Publishes a new parking space into the host's active inventory and syncs to Firestore.
-     *
-     * @param title Title or descriptor of the parking spot
-     * @param address Street address of the property
-     * @param rateStr Rate per hour string
-     * @param slotsStr Number of vehicle slots available
-     * @param hasEv Whether EV charging is supported
-     * @param lat Optional latitude (defaults to Dadar area)
-     * @param lng Optional longitude (defaults to Dadar area)
-     * @return Boolean indicating success or failure of validation
+     * Publishes a new parking space into the host's active inventory and persists to Cloud Firestore.
      */
     fun publishSpace(
         title: String,
@@ -46,6 +35,7 @@ class HostViewModel : ViewModel() {
         rateStr: String,
         slotsStr: String = "1",
         hasEv: Boolean = false,
+        schedule: String = "24/7 Available",
         lat: Double = 19.0178,
         lng: Double = 72.8478,
         onSuccess: () -> Unit = {}
@@ -79,12 +69,12 @@ class HostViewModel : ViewModel() {
         _errorMessage.value = null
 
         viewModelScope.launch {
-            // Simulate Firestore document write latency
-            delay(300)
+            val spotId = "spot-${UUID.randomUUID().toString().take(6)}"
+            val hostUid = ParkShareRepository.sessionState.value.uid.ifBlank { "host-primary" }
 
             val newListing = HostListing(
-                id = "host-spot-${UUID.randomUUID().toString().take(6)}",
-                hostId = ParkShareRepository.sessionState.value.userId.ifBlank { "host-primary" },
+                id = spotId,
+                hostId = hostUid,
                 title = title.trim(),
                 address = address.trim(),
                 hourlyRate = rate,
@@ -92,13 +82,14 @@ class HostViewModel : ViewModel() {
                 lng = lng,
                 totalSlots = slots,
                 hasEvCharging = hasEv,
+                availabilitySchedule = schedule.trim().ifBlank { "24/7 Available" },
                 isActive = true,
                 createdAt = System.currentTimeMillis()
             )
 
             ParkShareRepository.addHostListing(newListing)
             _isPublishing.value = false
-            _statusMessage.value = "Space \"${newListing.title}\" published successfully!"
+            _statusMessage.value = "Space \"${newListing.title}\" published to Firestore!"
             onSuccess()
         }
 
@@ -106,34 +97,18 @@ class HostViewModel : ViewModel() {
     }
 
     /**
-     * Backward-compatible alias for addListing.
-     */
-    fun addListing(
-        title: String,
-        address: String,
-        rateStr: String,
-        slotsStr: String,
-        hasEv: Boolean
-    ): Boolean {
-        return publishSpace(title, address, rateStr, slotsStr, hasEv)
-    }
-
-    /**
      * Toggles the active/inactive booking status for a specific listing in real time.
-     *
-     * @param listingId Identifier of the host listing
      */
     fun toggleListingStatus(listingId: String) {
-        ParkShareRepository.toggleListingStatus(listingId)
-        val listing = ParkShareRepository.hostListingsFlow.value.find { it.id == listingId }
-        listing?.let {
-            _statusMessage.value = "${it.title} is now ${if (it.isActive) "Active" else "Inactive"}."
+        viewModelScope.launch {
+            ParkShareRepository.toggleListingStatus(listingId)
+            val listing = ParkShareRepository.hostListingsFlow.value.find { it.id == listingId }
+            listing?.let {
+                _statusMessage.value = "${it.title} is now ${if (it.isActive) "Active" else "Inactive"} in Firestore."
+            }
         }
     }
 
-    /**
-     * Clears banner alerts.
-     */
     fun clearFeedback() {
         _errorMessage.value = null
         _statusMessage.value = null

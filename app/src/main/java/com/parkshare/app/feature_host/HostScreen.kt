@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AddBusiness
 import androidx.compose.material.icons.filled.Bolt
@@ -35,13 +36,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 /**
  * Material 3 Host Space Manager Screen.
  * Allows parking spot owners to register spaces with Title, Address, Hourly Rate,
- * EV Switch, "Publish Space" button, and manage an active properties dashboard.
+ * Total Slots, Availability Schedule, EV Switch, "Publish Space" button, and manage an active properties dashboard.
  */
 @Composable
 fun HostScreen(
     modifier: Modifier = Modifier,
     viewModel: HostViewModel = viewModel(),
     onOpenScanner: () -> Unit = {},
+    onOpenProfile: () -> Unit = {},
     onBackToAuth: () -> Unit = {}
 ) {
     val listings by viewModel.listings.collectAsState()
@@ -58,14 +60,21 @@ fun HostScreen(
         statusMessage = statusMessage,
         errorMessage = errorMessage,
         isPublishing = isPublishing,
-        onPublishSpace = { title, address, rate, slots, hasEv ->
-            viewModel.publishSpace(title, address, rate, slots, hasEv)
+        onPublishSpace = { title, address, rate, slots, hasEv, schedule ->
+            viewModel.publishSpace(
+                title = title,
+                address = address,
+                rateStr = rate,
+                slotsStr = slots,
+                hasEv = hasEv,
+                schedule = schedule
+            )
         },
         onToggleStatus = { listingId ->
             viewModel.toggleListingStatus(listingId)
         },
         onOpenScanner = onOpenScanner,
-        onBackToAuth = onBackToAuth,
+        onOpenProfile = onOpenProfile,
         onClearFeedback = { viewModel.clearFeedback() },
         modifier = modifier
     )
@@ -78,10 +87,10 @@ fun HostContent(
     statusMessage: String?,
     errorMessage: String?,
     isPublishing: Boolean,
-    onPublishSpace: (title: String, address: String, rate: String, slots: String, hasEv: Boolean) -> Boolean,
+    onPublishSpace: (title: String, address: String, rate: String, slots: String, hasEv: Boolean, schedule: String) -> Boolean,
     onToggleStatus: (String) -> Unit,
     onOpenScanner: () -> Unit,
-    onBackToAuth: () -> Unit,
+    onOpenProfile: () -> Unit,
     onClearFeedback: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -89,6 +98,7 @@ fun HostContent(
     var address by remember { mutableStateOf("") }
     var hourlyRate by remember { mutableStateOf("") }
     var totalSlots by remember { mutableStateOf("1") }
+    var availabilitySchedule by remember { mutableStateOf("08:00 - 22:00 Daily") }
     var hasEvCharging by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -149,7 +159,7 @@ fun HostContent(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
-                        IconButton(onClick = onBackToAuth) {
+                        IconButton(onClick = onOpenProfile) {
                             Icon(
                                 imageVector = Icons.Default.AccountCircle,
                                 contentDescription = "Profile",
@@ -385,6 +395,20 @@ fun HostContent(
                             )
                         }
 
+                        // Availability Schedule
+                        OutlinedTextField(
+                            value = availabilitySchedule,
+                            onValueChange = { availabilitySchedule = it },
+                            label = { Text("Availability Schedule") },
+                            placeholder = { Text("e.g. 08:00 - 22:00 Daily or 24/7 Available") },
+                            leadingIcon = {
+                                Icon(Icons.Default.AccessTime, contentDescription = null)
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         // EV Switch Row
                         Row(
                             modifier = Modifier
@@ -422,12 +446,20 @@ fun HostContent(
                         // Publish Space Button
                         Button(
                             onClick = {
-                                val success = onPublishSpace(title, address, hourlyRate, totalSlots, hasEvCharging)
+                                val success = onPublishSpace(
+                                    title,
+                                    address,
+                                    hourlyRate,
+                                    totalSlots,
+                                    hasEvCharging,
+                                    availabilitySchedule
+                                )
                                 if (success) {
                                     title = ""
                                     address = ""
                                     hourlyRate = ""
                                     totalSlots = "1"
+                                    availabilitySchedule = "08:00 - 22:00 Daily"
                                     hasEvCharging = false
                                 }
                             },
@@ -595,6 +627,30 @@ fun HostListingCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
+                }
+
+                // Schedule Badge
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccessTime,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = listing.availabilitySchedule,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 // EV Charger Badge
