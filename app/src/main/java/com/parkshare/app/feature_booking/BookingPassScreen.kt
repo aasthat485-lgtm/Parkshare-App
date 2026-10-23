@@ -11,18 +11,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Payment
 import androidx.compose.material.icons.filled.QrCode
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
@@ -34,8 +32,9 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Screen displaying the confirmed parking booking pass,
- * including booking transaction summary card and rendered 512x512 ZXing QR code image bitmap.
+ * Driver Active QR Pass Screen.
+ * Displays confirmed booking summary card, vehicle license plate, time window,
+ * and high-contrast 512x512 ZXing QR Code Pass Bitmap.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +46,9 @@ fun BookingPassScreen(
     val activeBooking by viewModel.activeBooking.collectAsState()
     val qrBitmap by viewModel.qrBitmap.collectAsState()
     val allBookings by viewModel.allBookings.collectAsState()
+    val conflictError by viewModel.bookingConflictError.collectAsState()
+
+    val timeFormatter = remember { SimpleDateFormat("hh:mm a, dd MMM", Locale.getDefault()) }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -60,7 +62,7 @@ fun BookingPassScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -70,7 +72,7 @@ fun BookingPassScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .size(40.dp)
                                 .background(
                                     color = MaterialTheme.colorScheme.primaryContainer,
                                     shape = CircleShape
@@ -86,28 +88,30 @@ fun BookingPassScreen(
                         }
                         Column {
                             Text(
-                                text = "Digital Parking Pass",
+                                text = "Active Parking Pass",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Razorpay Verified Pass",
+                                text = "Driver Mode • Verified Reservation",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color(0xFF2E7D32)
                             )
                         }
                     }
 
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFFE8F5E9)
-                    ) {
-                        Text(
-                            text = "ACTIVE",
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = Color(0xFF2E7D32),
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                    activeBooking?.let {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (it.status == BookingStatus.CHECKED_IN) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = it.status.name,
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (it.status == BookingStatus.CHECKED_IN) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -122,13 +126,40 @@ fun BookingPassScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Error banner if any conflict occurred
+            conflictError?.let { err ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { viewModel.clearConflictError() }) {
+                            Text("Dismiss")
+                        }
+                    }
+                }
+            }
+
             val booking = activeBooking
 
             if (booking == null) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(300.dp),
+                        .height(320.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -136,16 +167,16 @@ fun BookingPassScreen(
                             imageVector = Icons.Default.QrCode,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.size(64.dp)
+                            modifier = Modifier.size(68.dp)
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
                         Text(
                             text = "No Active Parking Pass",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Select a spot from Discovery and book to get your pass.",
+                            text = "Find a spot on the Map & reserve to generate your pass.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -155,10 +186,8 @@ fun BookingPassScreen(
                 // Booking Summary Card
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
                     elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp)
                 ) {
                     Column(
@@ -194,7 +223,7 @@ fun BookingPassScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "Payment Verified",
+                                    text = "Firestore Verified",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                                     color = Color(0xFF2E7D32)
                                 )
@@ -207,15 +236,15 @@ fun BookingPassScreen(
                         Box(
                             modifier = Modifier
                                 .size(240.dp)
-                                .background(Color.White, RoundedCornerShape(16.dp))
-                                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                                .background(Color.White, RoundedCornerShape(18.dp))
+                                .border(2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(18.dp))
                                 .padding(12.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             if (qrBitmap != null) {
                                 Image(
                                     bitmap = qrBitmap!!.asImageBitmap(),
-                                    contentDescription = "ZXing QR Code Pass Bitmap",
+                                    contentDescription = "ZXing QR Pass Bitmap",
                                     modifier = Modifier.fillMaxSize()
                                 )
                             } else {
@@ -226,10 +255,10 @@ fun BookingPassScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Text(
-                            text = "Scan at host entry gate for instant check-in",
+                            text = "Show this QR to the Host scanner upon vehicle entry",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
@@ -240,7 +269,7 @@ fun BookingPassScreen(
                             color = MaterialTheme.colorScheme.outlineVariant
                         )
 
-                        // Parking Spot Details
+                        // Vehicle & Spot Details
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
@@ -259,42 +288,35 @@ fun BookingPassScreen(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(
-                                    text = booking.spotAddress.ifBlank { "Mumbai, Maharashtra" },
+                                    text = booking.spotAddress,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                        // Payment Details Grid
+                        // Vehicle Number & Time Slot Grid
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                                     shape = RoundedCornerShape(12.dp)
                                 )
                                 .padding(12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
-                                Text("Duration", style = MaterialTheme.typography.labelSmall)
+                                Text("Vehicle No", style = MaterialTheme.typography.labelSmall)
                                 Text(
-                                    text = "${booking.durationHours} Hours",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                    text = booking.vehicleNo,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                                 )
                             }
                             Column {
-                                Text("Rate", style = MaterialTheme.typography.labelSmall)
-                                Text(
-                                    text = "₹${booking.hourlyRate.toInt()}/hr",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                            }
-                            Column {
-                                Text("Paid via Razorpay", style = MaterialTheme.typography.labelSmall)
+                                Text("Amount Paid", style = MaterialTheme.typography.labelSmall)
                                 Text(
                                     text = "₹${booking.amountPaid.toInt()}",
                                     style = MaterialTheme.typography.bodyMedium.copy(
@@ -304,10 +326,30 @@ fun BookingPassScreen(
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AccessTime,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Slot: ${timeFormatter.format(Date(booking.startTime))} - ${timeFormatter.format(Date(booking.endTime))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
-                // Action Buttons
+                // Back to Map Button
                 Button(
                     onClick = onNavigateBack,
                     shape = RoundedCornerShape(12.dp),
@@ -316,15 +358,15 @@ fun BookingPassScreen(
                         .height(50.dp)
                 ) {
                     Text(
-                        text = "Back to Discovery",
+                        text = "Back to Map Discovery",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
                 }
 
-                // Pass Selector if multiple bookings exist
+                // Recent Passes History List
                 if (allBookings.size > 1) {
                     Text(
-                        text = "Your Recent Parking Passes (${allBookings.size})",
+                        text = "All Reserved Passes (${allBookings.size})",
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -350,7 +392,7 @@ fun BookingPassScreen(
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                     )
                                     Text(
-                                        text = "ID: ${item.bookingId} • ₹${item.amountPaid.toInt()}",
+                                        text = "ID: ${item.bookingId} • Vehicle: ${item.vehicleNo} • ₹${item.amountPaid.toInt()}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -361,7 +403,7 @@ fun BookingPassScreen(
                                     else MaterialTheme.colorScheme.surfaceVariant
                                 ) {
                                     Text(
-                                        text = if (item.bookingId == booking.bookingId) "Viewing" else "Select",
+                                        text = if (item.bookingId == booking.bookingId) "Active" else "View",
                                         style = MaterialTheme.typography.labelSmall,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )

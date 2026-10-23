@@ -13,27 +13,27 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FlipCameraAndroid
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -48,12 +48,15 @@ import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * CameraX Host QR Scanner Screen.
- * Hosts an AndroidView-embedded PreviewView with an integrated ZXing ImageAnalysis
- * Barcode Analyzer to scan driver passes and confirm check-ins in real time.
+ * Host QR Scanner Screen using CameraX and ZXing.
+ * On QR detection, fetches Firestore booking records, verifies host ownership
+ * and slot validity, displaying driver details, vehicle plate number, and check-in confirmation.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +69,7 @@ fun HostQrScannerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val scannedBooking by viewModel.scannedPassResult.collectAsState()
+    val scanError by viewModel.scanError.collectAsState()
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -93,19 +97,28 @@ fun HostQrScannerScreen(
     var isBackCamera by remember { mutableStateOf(true) }
     var isScanPaused by remember { mutableStateOf(false) }
 
+    val timeFormatter = remember { SimpleDateFormat("hh:mm a, dd MMM", Locale.getDefault()) }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "Host Pass Scanner",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
+                    Column {
+                        Text(
+                            text = "Host Pass Scanner",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Host Mode • Entry Verification",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFF00E676)
+                        )
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
                     }
                 },
                 actions = {
@@ -117,24 +130,22 @@ fun HostQrScannerScreen(
                     ) {
                         Icon(
                             imageVector = if (isTorchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                            contentDescription = "Flashlight Toggle",
+                            contentDescription = "Torch",
                             tint = if (isTorchOn) Color(0xFFFFD600) else Color.White
                         )
                     }
                     IconButton(
-                        onClick = {
-                            isBackCamera = !isBackCamera
-                        }
+                        onClick = { isBackCamera = !isBackCamera }
                     ) {
                         Icon(
                             imageVector = Icons.Default.FlipCameraAndroid,
-                            contentDescription = "Flip Camera",
+                            contentDescription = "Flip",
                             tint = Color.White
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Black.copy(alpha = 0.7f),
+                    containerColor = Color.Black.copy(alpha = 0.8f),
                     titleContentColor = Color.White,
                     navigationIconContentColor = Color.White
                 )
@@ -148,7 +159,7 @@ fun HostQrScannerScreen(
                 .background(Color.Black)
         ) {
             if (hasCameraPermission) {
-                // CameraX PreviewView with Barcode Analyzer
+                // CameraX PreviewView with integrated barcode analyzer
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -170,7 +181,7 @@ fun HostQrScannerScreen(
                                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                                 .build()
                                 .also {
-                                    it.setAnalyzer(cameraExecutor, QrBarcodeAnalyzer { rawText ->
+                                    it.setAnalyzer(cameraExecutor, CameraBarcodeAnalyzer { rawText ->
                                         if (!isScanPaused) {
                                             isScanPaused = true
                                             viewModel.verifyScannedPass(rawText)
@@ -201,10 +212,10 @@ fun HostQrScannerScreen(
                     }
                 )
 
-                // Viewfinder Target Reticle Overlay
-                ViewfinderOverlay(modifier = Modifier.fillMaxSize())
+                // Viewfinder Reticle Overlay
+                ScannerReticleOverlay(modifier = Modifier.fillMaxSize())
 
-                // Instructions and Quick Simulation Button
+                // Instructions & Emulator Test Button
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -213,20 +224,19 @@ fun HostQrScannerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Align Driver QR Pass within the frame",
+                        text = "Align Driver's QR Pass within the targeting frame",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
                         color = Color.White,
                         textAlign = TextAlign.Center
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    // Test/Simulation trigger for emulators or testing without physical camera pass
                     Button(
                         onClick = {
-                            val demoPassId = viewModel.activeBooking.value?.qrPayload
-                                ?: "PS-101-DEMO"
-                            viewModel.verifyScannedPass(demoPassId)
+                            val active = viewModel.activeBooking.value?.qrPayload ?: "PS-101-DEMO"
+                            isScanPaused = true
+                            viewModel.verifyScannedPass(active)
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
@@ -235,11 +245,11 @@ fun HostQrScannerScreen(
                     ) {
                         Icon(Icons.Default.QrCodeScanner, contentDescription = null, Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Simulate Demo Pass Scan")
+                        Text("Simulate Verified Pass Scan")
                     }
                 }
             } else {
-                // Permission Denied Request View
+                // Camera Permission Request View
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -261,7 +271,7 @@ fun HostQrScannerScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Camera access is needed to scan driver QR passes at the parking entrance.",
+                        text = "Camera access is needed to scan and verify driver QR passes at the parking bay.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.LightGray,
                         textAlign = TextAlign.Center
@@ -274,6 +284,48 @@ fun HostQrScannerScreen(
                         Text("Grant Camera Access")
                     }
                 }
+            }
+
+            // Error Modal Dialog (Wrong Host or Expired)
+            scanError?.let { errorText ->
+                AlertDialog(
+                    onDismissRequest = {
+                        viewModel.clearScannedResult()
+                        isScanPaused = false
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Error,
+                            contentDescription = "Error",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    },
+                    title = {
+                        Text(
+                            text = "Verification Error",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = errorText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                viewModel.clearScannedResult()
+                                isScanPaused = false
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Try Another Pass")
+                        }
+                    }
+                )
             }
 
             // Scanned Pass Verification Modal Dialog
@@ -293,7 +345,7 @@ fun HostQrScannerScreen(
                     },
                     title = {
                         Text(
-                            text = "Pass Verified Successfully!",
+                            text = "Driver Pass Verified!",
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             textAlign = TextAlign.Center
                         )
@@ -310,26 +362,38 @@ fun HostQrScannerScreen(
                             )
                             Text(
                                 text = "Spot: ${booking.spotTitle}",
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                             )
-                            Text(
-                                text = "Driver: ${booking.driverEmail.ifBlank { "Verified Driver" }}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "Amount Paid: ₹${booking.amountPaid.toInt()} (Razorpay Verified)",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E7D32)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Person, contentDescription = null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Driver: ${booking.driverEmail.ifBlank { "Verified Driver" }}",
+                                    style = MaterialTheme.typography.bodySmall
                                 )
-                            )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.DirectionsCar, contentDescription = null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Vehicle No: ${booking.vehicleNo}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AccessTime, contentDescription = null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Valid: ${timeFormatter.format(Date(booking.startTime))} - ${timeFormatter.format(Date(booking.endTime))}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
                                 color = Color(0xFFE8F5E9)
                             ) {
                                 Text(
-                                    text = "STATUS: CHECKED-IN",
+                                    text = "STATUS: CHECKED-IN (PAID ₹${booking.amountPaid.toInt()})",
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     color = Color(0xFF2E7D32),
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -355,10 +419,10 @@ fun HostQrScannerScreen(
 }
 
 /**
- * Camera viewfinder reticle rendering corner guides and dark surrounding vignette.
+ * Camera viewfinder reticle rendering corner guides.
  */
 @Composable
-fun ViewfinderOverlay(modifier: Modifier = Modifier) {
+fun ScannerReticleOverlay(modifier: Modifier = Modifier) {
     Canvas(modifier = modifier) {
         val boxSize = size.width * 0.72f
         val left = (size.width - boxSize) / 2f
@@ -366,7 +430,6 @@ fun ViewfinderOverlay(modifier: Modifier = Modifier) {
         val right = left + boxSize
         val bottom = top + boxSize
 
-        // Corner bracket lines
         val cornerLength = 36f
         val strokeWidth = 5f
         val reticleColor = Color(0xFF00E676)
@@ -392,7 +455,7 @@ fun ViewfinderOverlay(modifier: Modifier = Modifier) {
 /**
  * ZXing Barcode Analyzer integrating with CameraX ImageAnalysis stream.
  */
-class QrBarcodeAnalyzer(
+class CameraBarcodeAnalyzer(
     private val onQrScanned: (String) -> Unit
 ) : ImageAnalysis.Analyzer {
 
@@ -425,7 +488,7 @@ class QrBarcodeAnalyzer(
                 onQrScanned(text)
             }
         } catch (_: Exception) {
-            // Frame did not contain a valid QR barcode, continue listening
+            // Frame did not contain a valid QR code
         } finally {
             imageProxy.close()
         }
