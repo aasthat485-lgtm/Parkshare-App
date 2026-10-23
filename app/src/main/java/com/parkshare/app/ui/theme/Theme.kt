@@ -2,30 +2,42 @@ package com.parkshare.app.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
+// Custom Dark and Light color schemes using the urban palette
 private val DarkColorScheme = darkColorScheme(
-    primary = Blue80,
-    secondary = BlueGrey80,
-    tertiary = Cyan80
+    primary = PrimaryElectric,
+    onPrimary = OnPrimary,
+    surface = SurfaceDark,
+    onSurface = Color.White,
+    background = BackgroundDark,
+    onBackground = Color.White,
+    secondary = SecondaryText
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Blue40,
-    secondary = BlueGrey40,
-    tertiary = Cyan40
+    primary = PrimaryElectric,
+    onPrimary = OnPrimary,
+    surface = SurfaceDark,
+    onSurface = Color.Black,
+    background = BackgroundDark,
+    onBackground = Color.Black,
+    secondary = SecondaryText
 )
 
 @Composable
 fun ParkshareTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // use fixed palette for production UI
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
@@ -40,6 +52,9 @@ fun ParkshareTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = AppShapes,
         content = content
     )
 }
+
+
