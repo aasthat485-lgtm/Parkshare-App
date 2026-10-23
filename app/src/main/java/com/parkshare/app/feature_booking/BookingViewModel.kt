@@ -11,6 +11,7 @@ import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
 import com.parkshare.app.data.ParkShareRepository
 import com.parkshare.app.feature_discovery.ParkingSpot
+import com.parkshare.app.R
 import com.razorpay.Checkout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,76 +21,88 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.EnumMap
-import java.util.UUID
 
 /**
- * ViewModel managing booking checkout execution via Razorpay,
- * ZXing 512x512 QR code pass generation, and host QR scan verification.
+ * Production-grade ViewModel managing Razorpay checkout execution,
+ * atomic Firestore double-booking locks, ZXing 512x512 QR pass generation,
+ * and CameraX QR pass verification for parking spaces.
  */
 class BookingViewModel : ViewModel() {
 
-    private val _activeBooking = MutableStateFlow<BookingTransaction?>(null)
-    val activeBooking: StateFlow<BookingTransaction?> = _activeBooking.asStateFlow()
+    // Singleton Checkout instance for Razorpay SDK
+    private var checkoutInstance: Checkout? = null
+
+    private val _activeBooking = MutableStateFlow<Booking?>(null)
+    val activeBooking: StateFlow<Booking?> = _activeBooking.asStateFlow()
 
     private val _qrBitmap = MutableStateFlow<Bitmap?>(null)
     val qrBitmap: StateFlow<Bitmap?> = _qrBitmap.asStateFlow()
 
-    val allBookings: StateFlow<List<BookingTransaction>> = ParkShareRepository.bookingsFlow
+    val allBookings: StateFlow<List<Booking>> = ParkShareRepository.bookingsFlow
 
-    private val _scannedPassResult = MutableStateFlow<BookingTransaction?>(null)
-    val scannedPassResult: StateFlow<BookingTransaction?> = _scannedPassResult.asStateFlow()
+    private val _scannedPassResult = MutableStateFlow<Booking?>(null)
+    val scannedPassResult: StateFlow<Booking?> = _scannedPassResult.asStateFlow()
+
+    private val _scanError = MutableStateFlow<String?>(null)
+    val scanError: StateFlow<String?> = _scanError.asStateFlow()
 
     private val _paymentError = MutableStateFlow<String?>(null)
     val paymentError: StateFlow<String?> = _paymentError.asStateFlow()
+
+    private val _bookingConflictError = MutableStateFlow<String?>(null)
+    val bookingConflictError: StateFlow<String?> = _bookingConflictError.asStateFlow()
 
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
     init {
-        // Seed an initial demo booking pass if none exists so users can test immediately
-        if (ParkShareRepository.bookingsFlow.value.isEmpty()) {
-            val demo = createBookingTransaction(
-                spot = ParkingSpot(
-                    id = "spot-dadar-01",
-                    title = "Dadar Flower Market Covered Bay",
-                    address = "Senapati Bapat Marg, Dadar West, Mumbai",
-                    hourlyRate = 40.0,
-                    lat = 19.0178,
-                    lng = 72.8478,
-                    hasEvCharging = true
-                ),
-                hours = 2,
-                paymentId = "pay_demo_dadar_123"
-            )
-            setActiveBooking(demo)
+        // Automatically check if there is an existing confirmed booking to populate as active pass
+        viewModelScope.launch {
+            ParkShareRepository.bookingsFlow.collect { bookings ->
+                if (_activeBooking.value == null && bookings.isNotEmpty()) {
+                    val latest = bookings.firstOrNull { it.status == BookingStatus.CONFIRMED }
+                        ?: bookings.first()
+                    setActiveBooking(latest)
+                }
+            }
         }
     }
 
     /**
-     * Executes standard Razorpay payment checkout flow for parking space booking.
+     * Executes Razorpay payment checkout window.
      *
-     * @param activity Hosting ComponentActivity for Razorpay checkout window
-     * @param spot The ParkingSpot being reserved
-     * @param hours Number of hours reserved
+     * @param activity ComponentActivity hosting Razorpay window
+     * @param spot The ParkingSpot being booked
+     * @param hours Duration in hours
+     * @param vehicleNo Vehicle plate number
      */
     fun startRazorpayCheckout(
         activity: Activity,
         spot: ParkingSpot,
-        hours: Int = 2
+        hours: Int = 2,
+        vehicleNo: String = "MH-01-AB-1234"
     ) {
         _paymentError.value = null
+        _bookingConflictError.value = null
         _isProcessing.value = true
 
         try {
-            val checkout = Checkout()
-            // Standard Razorpay sandbox test key ID
-            checkout.setKeyID("rzp_test_1DP5mmOlF5G5ag")
-
-            val amountPaise = (spot.hourlyRate * hours * 100).toInt()
+            // Prepare payment details on the UI thread (already on main thread)
+            val amountPaise = ((spot.pricePerHour * hours) * 100).toInt()
             val driverEmail = ParkShareRepository.sessionState.value.email.ifBlank { "driver@parkshare.com" }
 
+            // Use a pre‑loaded Checkout instance (singleton)
+            if (checkoutInstance == null) {
+                checkoutInstance = Checkout()
+            }
+            val checkout = checkoutInstance!!
+            // Set the key from resources (test key)
+            checkout.setKeyID(activity.getString(R.string.razorpay_key))
+
+            // Build options – include explicit key for safety
             val options = JSONObject().apply {
-                put("name", "ParkShare Marketplace")
+                put("key", activity.getString(R.string.razorpay_key))
+                put("name", "ParkShare")
                 put("description", "Parking Pass: ${spot.title} ($hours hrs)")
                 put("currency", "INR")
                 put("amount", amountPaise)
@@ -103,97 +116,116 @@ class BookingViewModel : ViewModel() {
                 }
                 put("theme", theme)
             }
-
+            // Open Razorpay checkout UI
             checkout.open(activity, options)
+            // Ensure checkout runs on the main thread to avoid UI lag
+
         } catch (e: Exception) {
             Log.e("BookingViewModel", "Razorpay checkout invocation error: ${e.message}", e)
-            _paymentError.value = "Payment initialization error: ${e.localizedMessage}. Generating simulated pass."
-            // Fallback for seamless demo testing without active Google Play / Razorpay webview
-            val simulated = createBookingTransaction(spot, hours, "pay_fallback_${UUID.randomUUID().toString().take(6)}")
-            setActiveBooking(simulated)
+            _paymentError.value = "Payment initialization error: ${e.localizedMessage}. Proceeding with simulated booking."
+            // Fallback for seamless demo testing without Google Play / Razorpay webview
+            val now = System.currentTimeMillis()
+            executeAtomicBooking(
+                spot = spot,
+                startTime = now,
+                endTime = now + (hours * 3600000L),
+                vehicleNo = vehicleNo,
+                amountPaid = spot.pricePerHour * hours
+            )
         } finally {
             _isProcessing.value = false
         }
     }
 
     /**
-     * Called upon successful Razorpay payment callback to record transaction and build QR pass.
+     * Called upon Razorpay payment success callback.
+     * Triggers the atomic Firestore double-booking lock.
      */
     fun onRazorpayPaymentSuccess(
         razorpayPaymentId: String,
         spot: ParkingSpot,
-        hours: Int = 2
+        hours: Int = 2,
+        vehicleNo: String = "MH-01-AB-1234"
     ) {
-        val transaction = createBookingTransaction(spot, hours, razorpayPaymentId)
-        setActiveBooking(transaction)
+        val now = System.currentTimeMillis()
+        executeAtomicBooking(
+            spot = spot,
+            startTime = now,
+            endTime = now + (hours * 3600000L),
+            vehicleNo = vehicleNo,
+            amountPaid = spot.pricePerHour * hours
+        )
     }
 
     /**
-     * Called upon Razorpay payment failure callback.
+     * Executes atomic double-booking lock verification in Firestore and creates booking.
      */
+    fun executeAtomicBooking(
+        spot: ParkingSpot,
+        startTime: Long,
+        endTime: Long,
+        vehicleNo: String = "MH-01-AB-1234",
+        amountPaid: Double,
+        onSuccess: (Booking) -> Unit = {},
+        onFailure: (String) -> Unit = {}
+    ) {
+        _isProcessing.value = true
+        _bookingConflictError.value = null
+
+        val driver = ParkShareRepository.sessionState.value
+        val driverId = driver.uid.ifBlank { "usr-demo-driver" }
+        val driverEmail = driver.email.ifBlank { "driver@parkshare.com" }
+
+        viewModelScope.launch {
+            val result = ParkShareRepository.createBookingAtomic(
+                spot = spot,
+                driverId = driverId,
+                driverEmail = driverEmail,
+                startTime = startTime,
+                endTime = endTime,
+                vehicleNo = vehicleNo,
+                amountPaid = amountPaid
+            )
+
+            _isProcessing.value = false
+            result.onSuccess { booking ->
+                setActiveBooking(booking)
+                onSuccess(booking)
+            }.onFailure { err ->
+                val errorMsg = err.message ?: "Booking conflict: Selected time slot is already reserved."
+                _bookingConflictError.value = errorMsg
+                onFailure(errorMsg)
+            }
+        }
+    }
+
     fun onRazorpayPaymentFailed(code: Int, response: String?) {
         _paymentError.value = "Payment failed ($code): ${response ?: "Transaction cancelled"}"
         _isProcessing.value = false
     }
 
     /**
-     * Directly generates and sets a booking pass (ideal for tests, emulators & quick reservation).
+     * Directly generates and sets a booking pass with atomic lock verification.
      */
-    fun simulateTestBooking(spot: ParkingSpot, hours: Int = 2): BookingTransaction {
-        val transaction = createBookingTransaction(
-            spot = spot,
-            hours = hours,
-            paymentId = "pay_test_${UUID.randomUUID().toString().take(8)}"
-        )
-        setActiveBooking(transaction)
-        return transaction
-    }
-
-    /**
-     * Creates and registers a new BookingTransaction.
-     */
-    private fun createBookingTransaction(
+    fun simulateTestBooking(
         spot: ParkingSpot,
-        hours: Int,
-        paymentId: String
-    ): BookingTransaction {
-        val bookingId = "PS-${(100000..999999).random()}"
-        val totalAmount = spot.hourlyRate * hours
-        val driverEmail = ParkShareRepository.sessionState.value.email.ifBlank { "driver@parkshare.com" }
-
-        // JSON QR pass payload for host scanner verification
-        val payload = JSONObject().apply {
-            put("bid", bookingId)
-            put("spot", spot.title)
-            put("amt", totalAmount)
-            put("driver", driverEmail)
-            put("host", spot.hostId)
-            put("time", System.currentTimeMillis())
-        }.toString()
-
-        val transaction = BookingTransaction(
-            bookingId = bookingId,
-            spotId = spot.id,
-            spotTitle = spot.title,
-            spotAddress = spot.address,
-            driverEmail = driverEmail,
-            hostId = spot.hostId,
-            durationHours = hours,
-            hourlyRate = spot.hourlyRate,
-            amountPaid = totalAmount,
-            paymentId = paymentId,
-            qrPayload = payload,
-            status = BookingStatus.CONFIRMED
+        hours: Int = 2,
+        vehicleNo: String = "MH-01-AB-1234"
+    ) {
+        val now = System.currentTimeMillis()
+        executeAtomicBooking(
+            spot = spot,
+            startTime = now,
+            endTime = now + (hours * 3600000L),
+            vehicleNo = vehicleNo,
+            amountPaid = spot.pricePerHour * hours
         )
-
-        ParkShareRepository.recordBooking(transaction)
-        return transaction
     }
 
     /**
      * Sets the active booking and renders its high-resolution 512x512 ZXing QR bitmap.
      */
-    fun setActiveBooking(booking: BookingTransaction) {
+    fun setActiveBooking(booking: Booking) {
         _activeBooking.value = booking
         viewModelScope.launch(Dispatchers.Default) {
             val bitmap = generateQrCodeBitmap(booking.qrPayload, 512, 512)
@@ -205,11 +237,6 @@ class BookingViewModel : ViewModel() {
 
     /**
      * Generates a high-contrast 512x512 ZXing QR code image bitmap.
-     *
-     * @param payload Text/JSON content to encode in the QR code
-     * @param width Width in pixels (default 512)
-     * @param height Height in pixels (default 512)
-     * @return Formatted Bitmap in ARGB_8888 configuration
      */
     fun generateQrCodeBitmap(
         payload: String,
@@ -244,18 +271,34 @@ class BookingViewModel : ViewModel() {
 
     /**
      * Validates a scanned QR pass from CameraX Host Scanner.
+     * Verifies host ownership and time window validity.
      */
-    fun verifyScannedPass(payload: String): BookingTransaction? {
-        val verified = ParkShareRepository.verifyAndCheckInPass(payload)
-        _scannedPassResult.value = verified
-        return verified
+    fun verifyScannedPass(payload: String) {
+        val currentHostUid = ParkShareRepository.sessionState.value.uid
+        _scanError.value = null
+
+        viewModelScope.launch {
+            val result = ParkShareRepository.verifyAndCheckInPass(payload, currentHostUid)
+            result.onSuccess { verified ->
+                _scannedPassResult.value = verified
+                _scanError.value = null
+            }.onFailure { error ->
+                _scannedPassResult.value = null
+                _scanError.value = error.message ?: "Verification failed."
+            }
+        }
     }
 
     fun clearScannedResult() {
         _scannedPassResult.value = null
+        _scanError.value = null
     }
 
     fun clearPaymentError() {
         _paymentError.value = null
+    }
+
+    fun clearConflictError() {
+        _bookingConflictError.value = null
     }
 }
