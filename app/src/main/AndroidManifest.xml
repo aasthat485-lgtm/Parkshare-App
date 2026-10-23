@@ -15,6 +15,7 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
+        android:name=".ParkshareApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -25,11 +26,14 @@
         <!-- Google Maps API Key Meta-Data -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyMockKeyForParkShareDev12345" />
+            android:value="AIzaSyDffnByCjexg712F670Rq_sgere5Omgi3A" />
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode|locale|fontScale|screenLayout|density|layoutDirection"
+            android:screenOrientation="portrait"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Parkshare">
             <intent-filter>
