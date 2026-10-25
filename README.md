@@ -82,17 +82,12 @@ com.parkshare.app/
 - **Build System**: Gradle 8.6 with Android Gradle Plugin 8.4.2
 ---
 💻 Running the App
-1. Open this folder in **Android Studio**:
-   ```bash
 1. Open the project folder in **Android Studio**:
-   ```
-   /Users/aasthatiwari/aasthatiwari-ParkshareApp
-   ```
 2. Allow Gradle sync to complete (pre-installed Gradle 8.6).
 3. Select an emulator or physical Android device (API 26+) and press **Run** (▶).
-2. Let Gradle sync finish (Gradle 8.6 is bundled).
-3. Choose an emulator or a physical Android device (API 26+).
-4. Press **Run** (▶). The app will prompt for camera permission the first time you open the QR scanner.
+4. Let Gradle sync finish (Gradle 8.6 is bundled).
+5. Choose an emulator or a physical Android device (API 26+).
+6. Press **Run** (▶). The app will prompt for camera permission the first time you open the QR scanner.
 ---
 ✅ Project Status
 All requested functionality – authentication, discovery, host management, Razorpay payment, QR pass generation, and live QR scanning – is fully implemented and tested. The app is ready for deployment or further UI polish.
